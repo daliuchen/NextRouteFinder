@@ -17,10 +17,7 @@
     "onCommand:next-route-finder.findRoute"
   ],
   "main": "./out/extension.js",
-  "repository": {
-  "type": "git",
-  "url": "https://github.com/liuchen/NextRouteFinder.git"
-},
+  "repository": "https://github.com/daliuchen/NextRouteFinder",
   "contributes": {
     "commands": [
       {
