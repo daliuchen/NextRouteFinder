@@ -1,4 +1,7 @@
-# Next.js Route Finder
+<div align="center">
+  <img src="./icon.png" alt="icon" width="100" />
+  <h1>Next.js Route Finder</h1>
+</div>
 
 A VSCode extension that helps you quickly locate Next.js pages by route path, with instant search and fuzzy matching.
 
