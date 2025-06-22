@@ -2,6 +2,9 @@
   "name": "next-route-finder",
   "displayName": "Next.js Route Finder",
   "description": "Quickly locate Next.js pages by route path",
+  "author": "EthanLiuChen",
+  "publisher": "EthanLiuChen",
+  "icon": "./icon.png",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.60.0"
