@@ -14,21 +14,135 @@ const ROUTE_DIRS = [
 
 const APP_ROUTE_FILENAMES = ['page.tsx', 'page.jsx', 'page.js', 'page.ts', 'layout.tsx', 'layout.jsx', 'layout.js', 'layout.ts', 'route.ts', 'route.js'];
 const PAGE_ROUTE_FILENAMES = ['.tsx', '.jsx', '.js', '.ts'];
+const ROUTE_FILE_EXTENSIONS = [...new Set([...APP_ROUTE_FILENAMES.map(name => path.extname(name)), ...PAGE_ROUTE_FILENAMES])];
+
+type RouteEntry = {
+    route: string;
+    file: string;
+    source: string;
+    workspaceName: string;
+    workspaceRoot: string;
+};
 
 // Cache all routes
-let allRoutes: { route: string, file: string, source: string }[] = [];
+let allRoutes: RouteEntry[] = [];
 
-export function activate(context: vscode.ExtensionContext) {
-    // 1. Scan all routes on activation
+function normalizeRoutePath(input: string): string {
+    return input.trim().replace(/^\/+|\/+$/g, '');
+}
+
+function routeToDisplay(route: string): string {
+    return route ? `/${route}` : '/';
+}
+
+function buildRouteItem(route: RouteEntry, isMultiRoot: boolean): vscode.QuickPickItem & { file: string } {
+    const relativePath = path.relative(route.workspaceRoot, route.file);
+    return {
+        label: isMultiRoot ? `${route.workspaceName}: ${relativePath}` : relativePath,
+        description: routeToDisplay(route.route),
+        file: route.file,
+    };
+}
+
+function scoreRouteMatch(route: string, query: string): number | null {
+    if (!query) {
+        return 1;
+    }
+
+    if (route === query) {
+        return 100;
+    }
+
+    if (isDynamicRouteMatch(route, query)) {
+        return 90;
+    }
+
+    if (route.startsWith(query)) {
+        return 80;
+    }
+
+    if (route.includes(query)) {
+        return 70;
+    }
+
+    if (query.includes(route)) {
+        return 60;
+    }
+
+    let cursor = 0;
+    for (const char of route) {
+        if (char === query[cursor]) {
+            cursor += 1;
+        }
+        if (cursor === query.length) {
+            return 50;
+        }
+    }
+
+    return null;
+}
+
+function rebuildAllRoutes() {
     const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (workspaceFolders) {
-        const rootPath = workspaceFolders[0].uri.fsPath;
-        allRoutes = [];
+    allRoutes = [];
+
+    if (!workspaceFolders) {
+        return;
+    }
+
+    for (const folder of workspaceFolders) {
+        const rootPath = folder.uri.fsPath;
         for (const dir of ROUTE_DIRS) {
             const absDir = path.join(rootPath, dir);
             if (fs.existsSync(absDir)) {
-                allRoutes.push(...scanAllRoutes(absDir, dir.includes('app'), [], dir));
+                allRoutes.push(...scanAllRoutes(absDir, dir.includes('app'), [], dir, folder.name, rootPath));
             }
+        }
+    }
+}
+
+export function activate(context: vscode.ExtensionContext) {
+    // 1. Scan all routes on activation
+    rebuildAllRoutes();
+
+    // 2. Auto-refresh route cache when route files change
+    const workspaceFolders = vscode.workspace.workspaceFolders || [];
+    let refreshTimer: NodeJS.Timeout | undefined;
+    const scheduleRefresh = () => {
+        if (refreshTimer) {
+            clearTimeout(refreshTimer);
+        }
+        refreshTimer = setTimeout(() => {
+            rebuildAllRoutes();
+        }, 200);
+    };
+
+    for (const folder of workspaceFolders) {
+        for (const dir of ROUTE_DIRS) {
+            const pattern = new vscode.RelativePattern(folder, `${dir}/**/*`);
+            const watcher = vscode.workspace.createFileSystemWatcher(pattern);
+            const shouldRefresh = (uri: vscode.Uri) => {
+                const normalized = uri.fsPath.replace(/\\/g, '/');
+                return ROUTE_FILE_EXTENSIONS.some(ext => normalized.endsWith(ext));
+            };
+
+            watcher.onDidCreate((uri) => {
+                if (shouldRefresh(uri)) {
+                    scheduleRefresh();
+                }
+            });
+            watcher.onDidChange((uri) => {
+                if (shouldRefresh(uri)) {
+                    scheduleRefresh();
+                }
+            });
+            watcher.onDidDelete((uri) => {
+                if (shouldRefresh(uri)) {
+                    scheduleRefresh();
+                }
+            });
+
+            context.subscriptions.push(watcher);
         }
     }
 
@@ -38,23 +152,25 @@ export function activate(context: vscode.ExtensionContext) {
         quickPick.placeholder = 'Enter Next.js route (e.g. /users/[id] or /blog)';
         quickPick.matchOnDescription = true;
         quickPick.matchOnDetail = true;
-        const workspaceFolders = vscode.workspace.workspaceFolders;
-        const rootPath = workspaceFolders ? workspaceFolders[0].uri.fsPath : '';
-        quickPick.items = allRoutes.map(match => ({
-            label: path.relative(rootPath, match.file),
-            description: match.route,
-            file: match.file
-        }));
+        const isMultiRoot = (vscode.workspace.workspaceFolders?.length || 0) > 1;
+        quickPick.items = [];
 
         function filterRoutes(input: string) {
-            if (!input) return [];
-            const normalized = input.startsWith('/') ? input.slice(1) : input;
-            return allRoutes.filter(r =>
-                r.route === normalized ||
-                isDynamicRouteMatch(r.route, normalized) ||
-                r.route.includes(normalized) ||
-                normalized.includes(r.route)
-            );
+            const normalized = normalizeRoutePath(input);
+
+            return allRoutes
+                .map(route => ({ route, score: scoreRouteMatch(route.route, normalized) }))
+                .filter((item): item is { route: RouteEntry; score: number } => item.score !== null)
+                .sort((a, b) => {
+                    if (b.score !== a.score) {
+                        return b.score - a.score;
+                    }
+                    if (a.route.route.length !== b.route.route.length) {
+                        return a.route.route.length - b.route.route.length;
+                    }
+                    return a.route.route.localeCompare(b.route.route);
+                })
+                .map(item => item.route);
         }
 
         quickPick.onDidChangeValue((value) => {
@@ -66,11 +182,7 @@ export function activate(context: vscode.ExtensionContext) {
             if (results.length === 0) {
                 quickPick.items = [{ label: 'No matching results', description: '', alwaysShow: true }];
             } else {
-                quickPick.items = results.map(match => ({
-                    label: path.relative(rootPath, match.file),
-                    description: match.route,
-                    file: match.file
-                }));
+                quickPick.items = results.map(match => buildRouteItem(match, isMultiRoot));
             }
         });
         quickPick.onDidAccept(() => {
@@ -84,10 +196,17 @@ export function activate(context: vscode.ExtensionContext) {
         quickPick.show();
     });
     context.subscriptions.push(disposable);
+    context.subscriptions.push({
+        dispose: () => {
+            if (refreshTimer) {
+                clearTimeout(refreshTimer);
+            }
+        }
+    });
 }
 
-function scanAllRoutes(baseDir: string, isAppDir: boolean, parentRouteParts: string[] = [], source: string): { route: string, file: string, source: string }[] {
-    const routes: { route: string, file: string, source: string }[] = [];
+function scanAllRoutes(baseDir: string, isAppDir: boolean, parentRouteParts: string[] = [], source: string, workspaceName: string, workspaceRoot: string): RouteEntry[] {
+    const routes: RouteEntry[] = [];
     const filesAndDirs = fs.readdirSync(baseDir);
     for (const name of filesAndDirs) {
         const fullPath = path.join(baseDir, name);
@@ -95,14 +214,14 @@ function scanAllRoutes(baseDir: string, isAppDir: boolean, parentRouteParts: str
         if (stat.isDirectory()) {
             // If the directory is wrapped in parentheses, recurse but do not add to route
             if (/^\(.*\)$/.test(name)) {
-                routes.push(...scanAllRoutes(fullPath, isAppDir, parentRouteParts, source));
+                routes.push(...scanAllRoutes(fullPath, isAppDir, parentRouteParts, source, workspaceName, workspaceRoot));
             } else {
-                routes.push(...scanAllRoutes(fullPath, isAppDir, [...parentRouteParts, name], source));
+                routes.push(...scanAllRoutes(fullPath, isAppDir, [...parentRouteParts, name], source, workspaceName, workspaceRoot));
             }
         } else {
             let route = getRouteFromFileWithParent(fullPath, isAppDir, parentRouteParts);
-            if (route) {
-                routes.push({ route, file: fullPath, source });
+            if (route !== null) {
+                routes.push({ route, file: fullPath, source, workspaceName, workspaceRoot });
             }
         }
     }
