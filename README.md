@@ -12,6 +12,9 @@ A VSCode extension that helps you quickly locate Next.js pages by route path, wi
 3. **Fuzzy Match**: Find pages even with partial route paths
 4. **Dynamic Route Match**: Support for Next.js dynamic routes (e.g., `[id]`, `[slug]`)
 5. **Supports both `app/` and `pages/` directories** (including `src/app` and `src/pages`)
+6. **Auto Refresh Route Index**: Automatically rebuilds route cache when route files are created/changed/deleted
+7. **Smart Ranking**: Search results are sorted by exact/dynamic/prefix/fuzzy relevance
+8. **Multi-root Workspace Support**: Scans all workspace folders and labels results by workspace when needed
 
 ## Usage
 
@@ -20,8 +23,9 @@ A VSCode extension that helps you quickly locate Next.js pages by route path, wi
 3. Start typing the route path you want to find (e.g., `/users/[id]`, `/blog`, `user`)
 4. The extension will:
    - Instantly show all matching routes as you type
-   - Open the file directly if there's only one match
-   - Show a quick pick menu if multiple matches are found
+   - Keep route index up to date automatically as files change
+   - Rank more relevant routes first
+   - Show workspace-prefixed paths in multi-root workspaces
 
 ## Examples
 
