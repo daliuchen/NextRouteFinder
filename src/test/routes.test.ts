@@ -7,12 +7,16 @@ import * as os from 'os';
 import * as path from 'path';
 import {
     RouteEntry,
+    RouteIndex,
     SKIP_DIR,
     collectRoutes,
     filterRoutes,
+    hasDynamicSegment,
     isDynamicRouteMatch,
     normalizeInput,
     resolveIncludedKinds,
+    routeForFile,
+    toDevServerUrl,
     toRouteSegment,
 } from '../routes';
 import { test } from './runner';
@@ -37,6 +41,13 @@ const FIXTURE_FILES = [
     'apps/web/src/app/_private/foo/page.tsx',
     'apps/web/src/app/blog/BlogCard.tsx',
     'apps/web/src/app/node_modules/pkg/app/page.tsx',
+    'apps/web/src/app/blog/loading.tsx',
+    'apps/web/src/app/blog/error.tsx',
+    'apps/web/src/app/blog/not-found.tsx',
+    'apps/web/src/app/blog/template.tsx',
+    'apps/web/src/app/@modal/default.tsx',
+    'apps/web/src/app/global-error.tsx',
+    'apps/web/src/app/guide/page.mdx',
     'legacy/package.json',
     'legacy/pages/index.tsx',
     'legacy/pages/posts/index.tsx',
@@ -66,8 +77,12 @@ function projectRoots(): string[] {
     return [fixtureRoot, path.join(fixtureRoot, 'apps/web'), path.join(fixtureRoot, 'legacy')];
 }
 
-async function scan(include?: string[]): Promise<RouteEntry[]> {
+async function scanIndex(include?: string[]): Promise<RouteIndex> {
     return collectRoutes(projectRoots(), resolveIncludedKinds(include));
+}
+
+async function scan(include?: string[]): Promise<RouteEntry[]> {
+    return (await scanIndex(include)).routes;
 }
 
 function routesOf(entries: RouteEntry[]): string[] {
@@ -94,6 +109,7 @@ test('scans both routers across a monorepo, with default include', async () => {
         'apps/web/src/app/blog/page.tsx',
         'apps/web/src/app/docs/[...slug]/page.tsx',
         'apps/web/src/app/feed/@sidebar/trending/page.tsx',
+        'apps/web/src/app/guide/page.mdx',
         'apps/web/src/app/photos/(.)photo/[id]/page.tsx',
         'legacy/pages/posts/index.tsx',
         'legacy/pages/posts/[slug].tsx',
@@ -166,7 +182,91 @@ test('pages/api is classified as a route handler', async () => {
 });
 
 test('a missing project root yields no routes and does not throw', async () => {
-    assert.deepStrictEqual(await collectRoutes([path.join(fixtureRoot, 'nope')], resolveIncludedKinds(undefined)), []);
+    assert.deepStrictEqual(await collectRoutes([path.join(fixtureRoot, 'nope')], resolveIncludedKinds(undefined)), { routes: [], dirs: [] });
+});
+
+test('"special" indexes loading, error, not-found, template, default and global-error', async () => {
+    const entries = await scan(['special']);
+    assert.deepStrictEqual(
+        entries.map(e => `${e.route} ${e.kind}`),
+        [
+            '/ default',
+            '/ global-error',
+            '/blog error',
+            '/blog loading',
+            '/blog not-found',
+            '/blog template',
+        ],
+    );
+    // The default setting keeps them out of the list
+    assert.ok(!(await scan()).some(e => e.kind !== 'page' && e.kind !== 'route'));
+});
+
+test('.mdx pages are indexed', async () => {
+    assert.ok(relativeFiles(await scan()).includes('apps/web/src/app/guide/page.mdx'));
+});
+
+test('routeForFile resolves a file back to the route it serves', async () => {
+    const built = await scanIndex();
+    const routeOf = (relative: string) => routeForFile(built, path.join(fixtureRoot, relative));
+
+    assert.deepStrictEqual(routeOf('apps/web/src/app/page.tsx'), { route: '/', kind: 'page' });
+    assert.deepStrictEqual(routeOf('apps/web/src/app/(marketing)/about/page.tsx'), { route: '/about', kind: 'page' });
+    assert.deepStrictEqual(routeOf('apps/web/src/app/users/[id]/page.tsx'), { route: '/users/[id]', kind: 'page' });
+    assert.deepStrictEqual(routeOf('apps/web/src/app/settings/(..)(..)billing/page.tsx'), { route: '/settings/billing', kind: 'page' });
+    assert.deepStrictEqual(routeOf('legacy/pages/posts/[slug].tsx'), { route: '/posts/[slug]', kind: 'page' });
+    assert.deepStrictEqual(routeOf('legacy/pages/api/health.ts'), { route: '/api/health', kind: 'route' });
+
+    // Works regardless of the include setting, which only governs the search list
+    assert.deepStrictEqual(routeOf('apps/web/src/app/users/[id]/layout.tsx'), { route: '/users/[id]', kind: 'layout' });
+    assert.deepStrictEqual(routeOf('apps/web/src/app/blog/loading.tsx'), { route: '/blog', kind: 'loading' });
+
+    assert.strictEqual(routeOf('apps/web/src/app/blog/BlogCard.tsx'), null, 'not a route file');
+    assert.strictEqual(routeOf('apps/web/src/app/_private/foo/page.tsx'), null, 'private folder');
+    assert.strictEqual(routeOf('legacy/pages/_app.tsx'), null);
+    assert.strictEqual(routeOf('apps/web/package.json'), null, 'outside every route directory');
+});
+
+test('routeForFile prefers the innermost route directory', () => {
+    // A nested project whose route directory sits inside its parent's one
+    const outer = path.join(fixtureRoot, 'site', 'app');
+    const inner = path.join(outer, 'embedded', 'app');
+    const nested: RouteIndex = {
+        routes: [],
+        dirs: [{ dir: outer, isAppDir: true }, { dir: inner, isAppDir: true }],
+    };
+    assert.deepStrictEqual(
+        routeForFile(nested, path.join(inner, 'docs', 'page.tsx')),
+        { route: '/docs', kind: 'page' },
+        'the inner project owns the file, so the outer prefix must not win',
+    );
+    assert.deepStrictEqual(
+        routeForFile(nested, path.join(outer, 'docs', 'page.tsx')),
+        { route: '/docs', kind: 'page' },
+    );
+});
+
+test('normalizeInput accepts a pasted URL', () => {
+    assert.strictEqual(normalizeInput('http://localhost:3000/users/42'), '/users/42');
+    assert.strictEqual(normalizeInput('https://example.com/blog?utm=x#top'), '/blog');
+    assert.strictEqual(normalizeInput('localhost:3000/blog'), '/blog');
+    assert.strictEqual(normalizeInput('127.0.0.1:8080/blog'), '/blog');
+    assert.strictEqual(normalizeInput('http://localhost:3000'), '/');
+    assert.strictEqual(normalizeInput('http://localhost:3000/'), '/');
+    assert.strictEqual(normalizeInput('/docs/%E4%B8%AD%E6%96%87'), '/docs/中文');
+    // Plain routes must survive untouched
+    assert.strictEqual(normalizeInput('/users/[id]'), '/users/[id]');
+    assert.strictEqual(normalizeInput('blog'), '/blog');
+    assert.strictEqual(normalizeInput('/docs/100%'), '/docs/100%', 'malformed escape is left alone');
+});
+
+test('hasDynamicSegment and toDevServerUrl', () => {
+    assert.ok(hasDynamicSegment('/users/[id]'));
+    assert.ok(hasDynamicSegment('/docs/[...slug]'));
+    assert.ok(!hasDynamicSegment('/blog'));
+    assert.strictEqual(toDevServerUrl('http://localhost:3000', '/blog'), 'http://localhost:3000/blog');
+    assert.strictEqual(toDevServerUrl('http://localhost:3000/', '/blog'), 'http://localhost:3000/blog');
+    assert.strictEqual(toDevServerUrl('http://localhost:3000', '/'), 'http://localhost:3000/');
 });
 
 test('toRouteSegment classifies directories', () => {

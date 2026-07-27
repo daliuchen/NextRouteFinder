@@ -1,4 +1,7 @@
 .github/**
+/*.vsix
+.gitignore
+.vscodeignore
 .vscode/**
 src/**
 out/test/**

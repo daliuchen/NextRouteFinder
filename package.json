@@ -1,20 +1,36 @@
 {
   "name": "next-route-finder",
   "displayName": "Next.js Route Finder",
-  "description": "Quickly locate Next.js pages by route path",
+  "description": "Jump between Next.js routes and files: search by route or paste a URL, and see the route of the file you are in.",
   "author": "EthanLiuChen",
   "publisher": "EthanLiuChen",
   "icon": "icon.png",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "engines": {
     "vscode": "^1.60.0"
   },
   "license": "MIT",
   "categories": [
-    "Other"
+    "Other",
+    "Programming Languages"
   ],
+  "keywords": [
+    "nextjs",
+    "next",
+    "route",
+    "app router",
+    "navigation"
+  ],
+  "galleryBanner": {
+    "color": "#0A0A0A",
+    "theme": "dark"
+  },
   "activationEvents": [
-    "onCommand:next-route-finder.findRoute"
+    "onCommand:next-route-finder.findRoute",
+    "onCommand:next-route-finder.copyRoute",
+    "onCommand:next-route-finder.openInBrowser",
+    "onCommand:next-route-finder.goToRelatedFile",
+    "workspaceContains:**/next.config.*"
   ],
   "main": "./out/extension.js",
   "repository": "https://github.com/daliuchen/NextRouteFinder",
@@ -22,7 +38,30 @@
     "commands": [
       {
         "command": "next-route-finder.findRoute",
-        "title": "Find Next.js Route"
+        "title": "Find Next.js Route",
+        "category": "Next Route Finder"
+      },
+      {
+        "command": "next-route-finder.copyRoute",
+        "title": "Copy Route of Current File",
+        "category": "Next Route Finder"
+      },
+      {
+        "command": "next-route-finder.openInBrowser",
+        "title": "Open Route of Current File in Browser",
+        "category": "Next Route Finder"
+      },
+      {
+        "command": "next-route-finder.goToRelatedFile",
+        "title": "Go to Related Route File",
+        "category": "Next Route Finder"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "next-route-finder.findRoute",
+        "key": "ctrl+alt+r",
+        "mac": "cmd+alt+r"
       }
     ],
     "configuration": {
@@ -39,16 +78,28 @@
             "enum": [
               "page",
               "layout",
-              "route"
+              "route",
+              "special"
             ],
             "enumDescriptions": [
               "Pages (app/**/page.tsx, pages/**/*.tsx)",
               "Layouts (app/**/layout.tsx) — shares its route with the sibling page, so it shows up as a second entry",
-              "Route handlers (app/**/route.ts, pages/api/**)"
+              "Route handlers (app/**/route.ts, pages/api/**)",
+              "loading, error, not-found, template, default and global-error files — each shares its route with the sibling page"
             ]
           },
           "uniqueItems": true,
-          "markdownDescription": "Which files to index as routes. Removing `layout` keeps one entry per route."
+          "markdownDescription": "Which files the `Find Next.js Route` list contains. Keeping only `page` and `route` gives one entry per route. `Go to Related Route File` and the status bar are not affected by this setting."
+        },
+        "nextRouteFinder.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the route served by the current file in the status bar. Click it to copy the route."
+        },
+        "nextRouteFinder.devServerUrl": {
+          "type": "string",
+          "default": "http://localhost:3000",
+          "description": "Origin used by 'Open Route of Current File in Browser'."
         }
       }
     }
@@ -68,5 +119,5 @@
     "eslint": "^8.18.0",
     "typescript": "^4.7.4"
   },
-  "packageManager": "pnpm@8.15.4"
-} 
+  "packageManager": "pnpm@9.15.9"
+}

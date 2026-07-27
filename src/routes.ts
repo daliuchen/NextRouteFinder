@@ -16,12 +16,30 @@ export const ROUTE_DIRS = [
     'pages',
 ];
 
-export const ROUTE_FILE_EXTENSIONS = ['.tsx', '.jsx', '.js', '.ts'];
+export const ROUTE_FILE_EXTENSIONS = ['.tsx', '.jsx', '.js', '.ts', '.mdx'];
 
-export type RouteKind = 'page' | 'layout' | 'route';
+/** Every App Router file kind. The file's basename is the kind, e.g. `loading.tsx`. */
+export type RouteKind =
+    | 'page'
+    | 'layout'
+    | 'route'
+    | 'loading'
+    | 'error'
+    | 'not-found'
+    | 'template'
+    | 'default'
+    | 'global-error';
 
-export const ALL_ROUTE_KINDS: RouteKind[] = ['page', 'layout', 'route'];
-export const DEFAULT_ROUTE_KINDS: RouteKind[] = ['page', 'route'];
+export const ALL_ROUTE_KINDS: RouteKind[] = ['page', 'layout', 'route', 'loading', 'error', 'not-found', 'template', 'default', 'global-error'];
+
+/** The states of a route that are not the route itself. Grouped behind one setting value. */
+export const SPECIAL_ROUTE_KINDS: RouteKind[] = ['loading', 'error', 'not-found', 'template', 'default', 'global-error'];
+
+/** What the `nextRouteFinder.include` setting accepts. */
+export type IncludeOption = 'page' | 'layout' | 'route' | 'special';
+
+export const ALL_INCLUDE_OPTIONS: IncludeOption[] = ['page', 'layout', 'route', 'special'];
+export const DEFAULT_INCLUDE_OPTIONS: IncludeOption[] = ['page', 'route'];
 
 // Not routable: colocated tests, stories and type declarations
 const NON_ROUTE_FILE_PATTERN = /\.(test|spec|stories|d)$/;
@@ -37,12 +55,33 @@ export interface RouteEntry {
     kind: RouteKind;
 }
 
+export interface RouteDir {
+    dir: string;
+    isAppDir: boolean;
+}
+
+export interface RouteIndex {
+    routes: RouteEntry[];
+    /** The route directories that were actually found, used for file -> route lookups. */
+    dirs: RouteDir[];
+}
+
+export const EMPTY_INDEX: RouteIndex = { routes: [], dirs: [] };
+
 export function resolveIncludedKinds(configured: string[] | undefined): Set<RouteKind> {
-    const kinds = new Set<RouteKind>(
-        (configured ?? DEFAULT_ROUTE_KINDS).filter((kind): kind is RouteKind => (ALL_ROUTE_KINDS as string[]).includes(kind))
-    );
+    const options = (configured ?? DEFAULT_INCLUDE_OPTIONS)
+        .filter((option): option is IncludeOption => (ALL_INCLUDE_OPTIONS as string[]).includes(option));
     // An empty or fully invalid setting would silently index nothing
-    return kinds.size > 0 ? kinds : new Set(DEFAULT_ROUTE_KINDS);
+    const effective = options.length > 0 ? options : DEFAULT_INCLUDE_OPTIONS;
+    const kinds = new Set<RouteKind>();
+    for (const option of effective) {
+        if (option === 'special') {
+            SPECIAL_ROUTE_KINDS.forEach(kind => kinds.add(kind));
+        } else {
+            kinds.add(option);
+        }
+    }
+    return kinds;
 }
 
 export function isAppRouterDir(dir: string): boolean {
@@ -50,22 +89,24 @@ export function isAppRouterDir(dir: string): boolean {
 }
 
 /**
- * Walks every route directory of every project root and returns the routes,
- * deduplicated by file and sorted by route.
+ * Walks every route directory of every project root. Routes are deduplicated
+ * by file and sorted by route.
  */
-export async function collectRoutes(projectRoots: string[], includedKinds: Set<RouteKind>): Promise<RouteEntry[]> {
+export async function collectRoutes(projectRoots: string[], includedKinds: Set<RouteKind>): Promise<RouteIndex> {
     const routes: RouteEntry[] = [];
+    const dirs: RouteDir[] = [];
     for (const projectRoot of projectRoots) {
         for (const dir of ROUTE_DIRS) {
             const absDir = path.join(projectRoot, dir);
             if (await isDirectory(absDir)) {
+                dirs.push({ dir: absDir, isAppDir: isAppRouterDir(dir) });
                 await scanAllRoutes(absDir, isAppRouterDir(dir), [], includedKinds, routes);
             }
         }
     }
     // A nested project root can be reached twice (e.g. app/ and src/app/ both present)
     const seen = new Set<string>();
-    return routes
+    const deduped = routes
         .filter(entry => {
             if (seen.has(entry.file)) {
                 return false;
@@ -74,6 +115,7 @@ export async function collectRoutes(projectRoots: string[], includedKinds: Set<R
             return true;
         })
         .sort((a, b) => a.route.localeCompare(b.route) || a.file.localeCompare(b.file));
+    return { routes: deduped, dirs };
 }
 
 async function isDirectory(target: string): Promise<boolean> {
@@ -103,8 +145,8 @@ async function scanAllRoutes(baseDir: string, isAppDir: boolean, parentRoutePart
             const nextParts = segment === null ? parentRouteParts : [...parentRouteParts, segment];
             await scanAllRoutes(fullPath, isAppDir, nextParts, includedKinds, out);
         } else if (entry.isFile()) {
-            const found = getRouteFromFileWithParent(entry.name, isAppDir, parentRouteParts, includedKinds);
-            if (found) {
+            const found = getRouteFromFileWithParent(entry.name, isAppDir, parentRouteParts);
+            if (found && includedKinds.has(found.kind)) {
                 out.push({ route: found.route, searchRoute: found.route.toLowerCase(), file: fullPath, kind: found.kind });
             }
         }
@@ -139,14 +181,14 @@ export function toRouteSegment(name: string, isAppDir: boolean): string | null |
     return intercepted === name ? name : (intercepted || null);
 }
 
-export function getRouteFromFileWithParent(fileName: string, isAppDir: boolean, parentRouteParts: string[], includedKinds: Set<RouteKind>): { route: string, kind: RouteKind } | null {
+export function getRouteFromFileWithParent(fileName: string, isAppDir: boolean, parentRouteParts: string[]): { route: string, kind: RouteKind } | null {
     const ext = path.extname(fileName);
     if (!ROUTE_FILE_EXTENSIONS.includes(ext)) {
         return null;
     }
     const base = path.basename(fileName, ext);
     if (isAppDir) {
-        if (!(ALL_ROUTE_KINDS as string[]).includes(base) || !includedKinds.has(base as RouteKind)) {
+        if (!(ALL_ROUTE_KINDS as string[]).includes(base)) {
             return null;
         }
         // Do not include filename in route
@@ -159,7 +201,35 @@ export function getRouteFromFileWithParent(fileName: string, isAppDir: boolean, 
     const route = base === 'index' ? toRoute(parentRouteParts) : toRoute([...parentRouteParts, base]);
     // pages/api/* are the pages-router equivalent of App Router route handlers
     const kind: RouteKind = route === '/api' || route.startsWith('/api/') ? 'route' : 'page';
-    return includedKinds.has(kind) ? { route, kind } : null;
+    return { route, kind };
+}
+
+/**
+ * The reverse direction: which route does this file serve? Works for any file
+ * below a known route directory, regardless of the `include` setting.
+ */
+export function routeForFile(index: RouteIndex, filePath: string): { route: string, kind: RouteKind } | null {
+    const target = path.resolve(filePath);
+    // Longest match wins, so a nested project beats its parent
+    const containing = index.dirs
+        .filter(({ dir }) => target.startsWith(dir + path.sep))
+        .sort((a, b) => b.dir.length - a.dir.length)[0];
+    if (!containing) {
+        return null;
+    }
+    const parts = path.relative(containing.dir, target).split(path.sep);
+    const fileName = parts[parts.length - 1];
+    const routeParts: string[] = [];
+    for (const part of parts.slice(0, -1)) {
+        const segment = toRouteSegment(part, containing.isAppDir);
+        if (segment === SKIP_DIR) {
+            return null;
+        }
+        if (segment !== null) {
+            routeParts.push(segment);
+        }
+    }
+    return getRouteFromFileWithParent(fileName, containing.isAppDir, routeParts);
 }
 
 // Always leading-slash based so that the root route is '/' instead of an empty
@@ -168,9 +238,28 @@ export function toRoute(parts: string[]): string {
     return '/' + parts.join('/');
 }
 
+/**
+ * Turns whatever the user pasted into a route path: a bare route, or a full
+ * URL copied from the browser, an error report or a log line.
+ */
 export function normalizeInput(input: string): string {
+    let value = input.trim();
+
+    // scheme://host[:port]
+    value = value.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]*/i, '');
+    // host[:port] with no scheme, only when a path follows
+    value = value.replace(/^(?:localhost|(?:\d{1,3}\.){3}\d{1,3}|[a-z0-9-]+(?:\.[a-z0-9-]+)+)(?::\d+)?(?=\/)/i, '');
+    // query string and fragment
+    value = value.split(/[?#]/)[0];
+
+    try {
+        value = decodeURIComponent(value);
+    } catch {
+        // Leave malformed percent-escapes alone
+    }
+
     // Lowercased: real routes are case sensitive, but a search box should not be
-    let value = input.trim().toLowerCase();
+    value = value.trim().toLowerCase();
     if (!value.startsWith('/')) {
         value = '/' + value;
     }
@@ -233,4 +322,13 @@ export function isDynamicRouteMatch(fileRoute: string, routePath: string): boole
         }
     }
     return fileParts.length === routeParts.length;
+}
+
+export function hasDynamicSegment(route: string): boolean {
+    return route.split('/').some(part => part.startsWith('[') && part.endsWith(']'));
+}
+
+/** Joins a dev server origin and a route into a URL that can be opened. */
+export function toDevServerUrl(origin: string, route: string): string {
+    return origin.replace(/\/+$/, '') + (route === '/' ? '/' : route);
 }

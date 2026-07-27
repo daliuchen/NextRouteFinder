@@ -1,79 +1,93 @@
 <div align="center">
   <img src="./icon.png" alt="icon" width="100" />
   <h1>Next.js Route Finder</h1>
+  <p>Move between Next.js routes and files in both directions, without leaving the keyboard.</p>
 </div>
 
-A VSCode extension that helps you quickly locate Next.js pages by route path, with instant search and fuzzy matching.
+## Route → file
 
-## Features
+Press `Cmd+Alt+R` (`Ctrl+Alt+R` on Windows/Linux) and type. Results appear as you type, and a single match opens straight away.
 
-1. **Instant Search**: See matching routes as you type (no need to press Enter)
-2. **Exact Match**: Find pages by their exact route path
-3. **Fuzzy Match**: Find pages even with partial route paths, case insensitive
-4. **Dynamic Route Match**: Support for Next.js dynamic routes — `[id]`, catch-all `[...slug]` and optional catch-all `[[...slug]]`
-5. **Supports both `app/` and `pages/` directories** (including `src/app` and `src/pages`)
-6. **App Router conventions**: route groups `(group)`, parallel route slots `@slot`, intercepting routes `(.)folder` and private folders `_folder` are resolved to the URL they actually serve
-7. **Monorepo aware**: every `package.json` directory in the workspace is treated as a candidate Next.js project, so `apps/web/app/...` is found too
-8. **Always up to date**: the route index refreshes automatically when files are added, renamed or deleted
+| Type this | To reach |
+| --- | --- |
+| `/blog` | `app/blog/page.tsx` |
+| `/users/123` | `app/users/[id]/page.tsx` |
+| `/docs/getting-started/install` | `app/docs/[...slug]/page.tsx` |
+| `http://localhost:3000/users/42?tab=profile` | `app/users/[id]/page.tsx` |
+| `user` | anything with `user` in the route |
 
-## Usage
+That fourth row is the one to remember: **paste a URL straight from the browser, a Sentry issue or a log line** and land on the source file. The origin, query string and fragment are stripped for you.
 
-1. Press `Ctrl+Shift+P` (Windows/Linux) or `Cmd+Shift+P` (Mac) to open the command palette
-2. Type "Find Next.js Route" and select the command
-3. Start typing the route path you want to find (e.g., `/users/[id]`, `/blog`, `user`)
-4. The extension will:
-   - Instantly show all matching routes as you type
-   - Open the file directly if there's only one match
-   - Show a quick pick menu if multiple matches are found
+## File → route
 
-## Examples
+Open any page and its route is in the status bar. Click it to copy.
 
-- `/users/[id]` - Finds dynamic user profile pages
-- `/blog` - Finds the blog index page
-- `/products` - Finds product-related pages
-- `user` - Fuzzy matches any user-related pages (e.g., `user_profile`, `users`)
-- `[slug]` - Matches any dynamic route with `[slug]`
+| Command | Default keybinding |
+| --- | --- |
+| Find Next.js Route | `Cmd+Alt+R` / `Ctrl+Alt+R` |
+| Copy Route of Current File | — |
+| Open Route of Current File in Browser | — |
+| Go to Related Route File | — |
+
+**Open in Browser** opens the current page on your dev server; if the route has dynamic segments it asks for the values first. **Go to Related Route File** jumps between the `page`, `layout`, `loading`, `error`, `not-found`, `template` and `default` files of the folder you are in.
+
+All commands are under the `Next Route Finder:` prefix in the command palette. Add your own keybindings in `Preferences: Open Keyboard Shortcuts`.
+
+## What gets indexed
+
+Both routers, in `app/`, `src/app/`, `pages/` and `src/pages/`, for **every** Next.js project in the workspace — each `next.config.*` and `package.json` directory is a candidate root, so monorepos and multi-root workspaces work.
+
+App Router folder conventions are resolved to the URL actually served:
+
+| On disk | Route |
+| --- | --- |
+| `app/(marketing)/about/page.tsx` | `/about` |
+| `app/@modal/default.tsx` | `/` |
+| `app/photos/(.)photo/[id]/page.tsx` | `/photos/photo/[id]` |
+| `app/_private/foo/page.tsx` | not a route |
+
+The index refreshes by itself when files are added, renamed or deleted.
 
 ## Settings
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `nextRouteFinder.include` | `["page", "route"]` | Which files to index. `page` = pages, `route` = route handlers (`app/**/route.ts`, `pages/api/**`), `layout` = layouts. Layouts share their route with the sibling page, so enabling `layout` gives you two entries per route. |
+| `nextRouteFinder.include` | `["page", "route"]` | What the search list contains. `page`, `route` (route handlers and `pages/api`), `layout`, and `special` (`loading`, `error`, `not-found`, `template`, `default`, `global-error`). Everything except `page` and `route` shares a route with its sibling page, so adding them means several entries per route. Does not affect the status bar or Go to Related Route File. |
+| `nextRouteFinder.showStatusBar` | `true` | Show the current file's route in the status bar. |
+| `nextRouteFinder.devServerUrl` | `http://localhost:3000` | Origin used by Open Route of Current File in Browser. |
 
 ## Known Limitations
 
 - In the `pages/` router, Next.js turns *every* file under `pages/` into a route, so colocated components (`pages/components/Card.tsx`) are listed as well. Only `_`-prefixed, `.d.ts`, `.test.*`, `.spec.*` and `.stories.*` files are filtered out. A custom `pageExtensions` config is not read.
 - Intercepting routes are listed at their file system path (`app/photos/(.)photo/[id]` → `/photos/photo/[id]`) rather than at the URL they intercept.
+- In a workspace with more than 200 `package.json` files, only the first 200 are considered. Projects with a `next.config.*` are always included.
+
+## Installation
+
+Install [Next.js Route Finder](https://marketplace.visualstudio.com/items?itemName=EthanLiuChen.next-route-finder) from the Marketplace, or run:
+
+```
+ext install EthanLiuChen.next-route-finder
+```
 
 ## Requirements
 
 - VSCode 1.60.0 or higher
-- Next.js project with an `app` or `pages` directory (supports `src/app`, `app`, `src/pages`, `pages`)
-- pnpm 8.15.4 or higher
-
-## Installation
-
-1. Clone this repository
-2. Run `pnpm install`
-3. Press F5 to start debugging
-4. The extension will be installed in your VSCode instance
+- A Next.js project with an `app` or `pages` directory (`src/app`, `app`, `src/pages` or `pages`)
 
 ## Development
 
 ```bash
-# Install dependencies
-pnpm install
-
-# Compile the extension
-pnpm run compile
-
-# Watch for changes
-pnpm run watch
-
-# Run tests
-pnpm test
+pnpm install     # install dependencies
+pnpm run compile # build once
+pnpm run watch   # rebuild on change
+pnpm test        # compile, lint and run the test suite
 ```
+
+Press `F5` to launch an Extension Development Host with the extension loaded.
+
+Route discovery and matching live in [`src/routes.ts`](./src/routes.ts) and import no VS Code API, so they are covered by plain unit tests in [`src/test`](./src/test). [`src/extension.ts`](./src/extension.ts) holds the editor integration.
 
 ## License
 
-This project is licensed under the [MIT License](./LICENSE). 
+This project is licensed under the [MIT License](./LICENSE).
