@@ -1,0 +1,11 @@
+.github/**
+.vscode/**
+src/**
+out/test/**
+out/**/*.map
+node_modules/**
+.eslintrc.json
+tsconfig.json
+pnpm-lock.yaml
+pnpm-workspace.yaml
+**/*.tsbuildinfo

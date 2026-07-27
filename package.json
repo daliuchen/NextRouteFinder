@@ -57,9 +57,8 @@
     "vscode:prepublish": "pnpm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "pretest": "pnpm run compile && pnpm run lint",
     "lint": "eslint src --ext ts",
-    "test": "node ./out/test/runTest.js"
+    "test": "pnpm run compile && pnpm run lint && node ./out/test/run.js"
   },
   "devDependencies": {
     "@types/vscode": "^1.60.0",
