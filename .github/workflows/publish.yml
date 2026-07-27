@@ -1,0 +1,105 @@
+name: Publish to Marketplaces
+
+# Manual only. Pick the branch or tag to publish from in the "Run workflow"
+# dialog; the version published is whatever package.json says at that ref.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Where to publish
+        type: choice
+        required: true
+        default: both
+        options:
+          - both
+          - open-vsx
+          - vs-marketplace
+      dry-run:
+        description: Build and verify the tokens, but publish nothing
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Compile, lint and test
+        run: pnpm test
+
+      - name: Read version
+        id: meta
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      # Fail before publishing anywhere rather than half way through
+      - name: Check the tokens are configured
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          missing=""
+          case "${{ inputs.target }}" in
+            both)           [ -z "$OVSX_PAT" ] && missing="$missing OVSX_PAT"
+                            [ -z "$VSCE_PAT" ] && missing="$missing VSCE_PAT" ;;
+            open-vsx)       [ -z "$OVSX_PAT" ] && missing="$missing OVSX_PAT" ;;
+            vs-marketplace) [ -z "$VSCE_PAT" ] && missing="$missing VSCE_PAT" ;;
+          esac
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secret(s):$missing — add them under Settings > Secrets and variables > Actions"
+            exit 1
+          fi
+
+      - name: Package extension
+        run: npx @vscode/vsce package --no-dependencies -o next-route-finder-${{ steps.meta.outputs.version }}.vsix
+
+      - name: Upload VSIX as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: next-route-finder-${{ steps.meta.outputs.version }}
+          path: '*.vsix'
+
+      # Open VSX first: it serves Cursor, Windsurf, VSCodium and Gitpod
+      - name: Publish to Open VSX
+        if: ${{ !inputs.dry-run && (inputs.target == 'both' || inputs.target == 'open-vsx') }}
+        run: npx ovsx publish next-route-finder-${{ steps.meta.outputs.version }}.vsix --skip-duplicate -p "$OVSX_PAT"
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+
+      - name: Publish to VS Code Marketplace
+        if: ${{ !inputs.dry-run && (inputs.target == 'both' || inputs.target == 'vs-marketplace') }}
+        run: npx @vscode/vsce publish --no-dependencies --packagePath next-route-finder-${{ steps.meta.outputs.version }}.vsix -p "$VSCE_PAT"
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      - name: Verify the tokens without publishing
+        if: ${{ inputs.dry-run }}
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          echo "Dry run: built next-route-finder-${{ steps.meta.outputs.version }}.vsix, published nothing."
+          if [ -n "$OVSX_PAT" ]; then npx ovsx verify-pat EthanLiuChen -p "$OVSX_PAT"; fi
+
+      - name: Summary
+        run: |
+          {
+            echo "### next-route-finder ${{ steps.meta.outputs.version }}"
+            echo
+            echo "- ref: \`${{ github.ref_name }}\`"
+            echo "- target: \`${{ inputs.target }}\`"
+            echo "- dry run: \`${{ inputs.dry-run }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
