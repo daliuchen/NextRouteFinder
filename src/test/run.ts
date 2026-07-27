@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 import './routes.test';
+import './extension.test';
 import { run } from './runner';
 
 void run();
