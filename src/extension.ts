@@ -14,8 +14,15 @@ const ROUTE_DIRS = [
     'pages',
 ];
 
-const APP_ROUTE_FILENAMES = ['page.tsx', 'page.jsx', 'page.js', 'page.ts', 'layout.tsx', 'layout.jsx', 'layout.js', 'layout.ts', 'route.ts', 'route.js'];
-const PAGE_ROUTE_EXTENSIONS = ['.tsx', '.jsx', '.js', '.ts'];
+const ROUTE_FILE_EXTENSIONS = ['.tsx', '.jsx', '.js', '.ts'];
+
+type RouteKind = 'page' | 'layout' | 'route';
+
+const ALL_ROUTE_KINDS: RouteKind[] = ['page', 'layout', 'route'];
+const DEFAULT_ROUTE_KINDS: RouteKind[] = ['page', 'route'];
+
+// Not routable: colocated tests, stories and type declarations
+const NON_ROUTE_FILE_PATTERN = /\.(test|spec|stories|d)$/;
 
 // Directories that can never contain routes, skipped while walking
 const IGNORED_DIRS = new Set(['node_modules', '.git', '.next', '.turbo', 'dist', 'out', 'build', 'coverage']);
@@ -27,7 +34,10 @@ const REFRESH_DEBOUNCE_MS = 500;
 
 interface RouteEntry {
     route: string;
+    // Lowercased route, precomputed so that filtering stays case insensitive
+    searchRoute: string;
     file: string;
+    kind: RouteKind;
 }
 
 // Cache all routes
@@ -56,6 +66,11 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         watcher,
         vscode.workspace.onDidChangeWorkspaceFolders(scheduleRefresh),
+        vscode.workspace.onDidChangeConfiguration(event => {
+            if (event.affectsConfiguration('nextRouteFinder.include')) {
+                scheduleRefresh();
+            }
+        }),
         new vscode.Disposable(() => {
             if (refreshTimer) {
                 clearTimeout(refreshTimer);
@@ -123,7 +138,8 @@ function toQuickPickItems(entries: RouteEntry[]): RouteQuickPickItem[] {
 }
 
 function normalizeInput(input: string): string {
-    let value = input.trim();
+    // Lowercased: real routes are case sensitive, but a search box should not be
+    let value = input.trim().toLowerCase();
     if (!value.startsWith('/')) {
         value = '/' + value;
     }
@@ -143,13 +159,13 @@ function filterRoutes(input: string): RouteEntry[] {
     const matched: { entry: RouteEntry, rank: number }[] = [];
     for (const entry of allRoutes) {
         let rank: number;
-        if (entry.route === normalized) {
+        if (entry.searchRoute === normalized) {
             rank = 0;
-        } else if (isDynamicRouteMatch(entry.route, normalized)) {
+        } else if (isDynamicRouteMatch(entry.searchRoute, normalized)) {
             rank = 1;
-        } else if (entry.route.includes(loose)) {
+        } else if (entry.searchRoute.includes(loose)) {
             rank = 2;
-        } else if (entry.route !== '/' && loose.includes(entry.route.slice(1))) {
+        } else if (entry.route !== '/' && loose.includes(entry.searchRoute.slice(1))) {
             rank = 3;
         } else {
             continue;
@@ -181,12 +197,13 @@ function refreshRoutes(): Promise<void> {
 
 async function scanWorkspace(): Promise<void> {
     const routes: RouteEntry[] = [];
+    const includedKinds = getIncludedKinds();
     try {
         for (const projectRoot of await findProjectRoots()) {
             for (const dir of ROUTE_DIRS) {
                 const absDir = path.join(projectRoot, dir);
                 if (await isDirectory(absDir)) {
-                    await scanAllRoutes(absDir, isAppRouterDir(dir), [], routes);
+                    await scanAllRoutes(absDir, isAppRouterDir(dir), [], includedKinds, routes);
                 }
             }
         }
@@ -224,6 +241,15 @@ function isAppRouterDir(dir: string): boolean {
     return dir === 'app' || dir === 'src/app';
 }
 
+function getIncludedKinds(): Set<RouteKind> {
+    const configured = vscode.workspace.getConfiguration('nextRouteFinder').get<string[]>('include');
+    const kinds = new Set<RouteKind>(
+        (configured ?? DEFAULT_ROUTE_KINDS).filter((kind): kind is RouteKind => (ALL_ROUTE_KINDS as string[]).includes(kind))
+    );
+    // An empty or fully invalid setting would silently index nothing
+    return kinds.size > 0 ? kinds : new Set(DEFAULT_ROUTE_KINDS);
+}
+
 async function isDirectory(target: string): Promise<boolean> {
     try {
         return (await fsp.stat(target)).isDirectory();
@@ -232,7 +258,7 @@ async function isDirectory(target: string): Promise<boolean> {
     }
 }
 
-async function scanAllRoutes(baseDir: string, isAppDir: boolean, parentRouteParts: string[], out: RouteEntry[]): Promise<void> {
+async function scanAllRoutes(baseDir: string, isAppDir: boolean, parentRouteParts: string[], includedKinds: Set<RouteKind>, out: RouteEntry[]): Promise<void> {
     let entries: fs.Dirent[];
     try {
         entries = await fsp.readdir(baseDir, { withFileTypes: true });
@@ -244,35 +270,70 @@ async function scanAllRoutes(baseDir: string, isAppDir: boolean, parentRoutePart
     for (const entry of entries) {
         const fullPath = path.join(baseDir, entry.name);
         if (entry.isDirectory()) {
-            if (IGNORED_DIRS.has(entry.name)) {
+            const segment = toRouteSegment(entry.name, isAppDir);
+            if (segment === SKIP_DIR) {
                 continue;
             }
-            // If the directory is wrapped in parentheses, recurse but do not add to route
-            const nextParts = /^\(.*\)$/.test(entry.name) ? parentRouteParts : [...parentRouteParts, entry.name];
-            await scanAllRoutes(fullPath, isAppDir, nextParts, out);
+            const nextParts = segment === null ? parentRouteParts : [...parentRouteParts, segment];
+            await scanAllRoutes(fullPath, isAppDir, nextParts, includedKinds, out);
         } else if (entry.isFile()) {
-            const route = getRouteFromFileWithParent(entry.name, isAppDir, parentRouteParts);
-            if (route !== null) {
-                out.push({ route, file: fullPath });
+            const found = getRouteFromFileWithParent(entry.name, isAppDir, parentRouteParts, includedKinds);
+            if (found) {
+                out.push({ route: found.route, searchRoute: found.route.toLowerCase(), file: fullPath, kind: found.kind });
             }
         }
     }
 }
 
-function getRouteFromFileWithParent(fileName: string, isAppDir: boolean, parentRouteParts: string[]): string | null {
-    if (isAppDir) {
-        if (!APP_ROUTE_FILENAMES.includes(fileName)) {
-            return null;
-        }
-        // Do not include filename in route
-        return toRoute(parentRouteParts);
+// Returned instead of a segment name when the whole subtree is not routable
+const SKIP_DIR = Symbol('skip');
+
+/**
+ * Maps a directory name to the route segment it contributes.
+ * `null` means "recurse but contribute nothing", SKIP_DIR means "do not recurse".
+ */
+function toRouteSegment(name: string, isAppDir: boolean): string | null | typeof SKIP_DIR {
+    if (IGNORED_DIRS.has(name)) {
+        return SKIP_DIR;
     }
+    if (!isAppDir) {
+        return name;
+    }
+    // Private folder: opted out of routing entirely
+    if (name.startsWith('_')) {
+        return SKIP_DIR;
+    }
+    // Route group (folder) and parallel route slot @folder: transparent to the URL
+    if (/^\(.*\)$/.test(name) || name.startsWith('@')) {
+        return null;
+    }
+    // Intercepting route: (.)folder, (..)folder, (..)(..)folder, (...)folder.
+    // The markers say which level is intercepted, the tail is the segment name.
+    const intercepted = name.replace(/^(\(\.{1,3}\))+/, '');
+    return intercepted === name ? name : (intercepted || null);
+}
+
+function getRouteFromFileWithParent(fileName: string, isAppDir: boolean, parentRouteParts: string[], includedKinds: Set<RouteKind>): { route: string, kind: RouteKind } | null {
     const ext = path.extname(fileName);
-    if (!PAGE_ROUTE_EXTENSIONS.includes(ext)) {
+    if (!ROUTE_FILE_EXTENSIONS.includes(ext)) {
         return null;
     }
     const base = path.basename(fileName, ext);
-    return base === 'index' ? toRoute(parentRouteParts) : toRoute([...parentRouteParts, base]);
+    if (isAppDir) {
+        if (!(ALL_ROUTE_KINDS as string[]).includes(base) || !includedKinds.has(base as RouteKind)) {
+            return null;
+        }
+        // Do not include filename in route
+        return { route: toRoute(parentRouteParts), kind: base as RouteKind };
+    }
+    // Pages router: _app / _document / _error and friends are not routable
+    if (base.startsWith('_') || NON_ROUTE_FILE_PATTERN.test(base)) {
+        return null;
+    }
+    const route = base === 'index' ? toRoute(parentRouteParts) : toRoute([...parentRouteParts, base]);
+    // pages/api/* are the pages-router equivalent of App Router route handlers
+    const kind: RouteKind = route === '/api' || route.startsWith('/api/') ? 'route' : 'page';
+    return includedKinds.has(kind) ? { route, kind } : null;
 }
 
 // Always leading-slash based so that the root route is '/' instead of an empty
@@ -284,15 +345,28 @@ function toRoute(parts: string[]): string {
 function isDynamicRouteMatch(fileRoute: string, routePath: string): boolean {
     const fileParts = fileRoute.split('/');
     const routeParts = routePath.split('/');
-    if (fileParts.length !== routeParts.length) {
-        return false;
-    }
-    return fileParts.every((part, index) => {
-        if (part.startsWith('[') && part.endsWith(']')) {
+    for (let i = 0; i < fileParts.length; i++) {
+        const part = fileParts[i];
+        // [[...slug]] swallows every remaining segment, including none at all
+        if (/^\[\[\.\.\..*\]\]$/.test(part)) {
             return true;
         }
-        return part === routeParts[index];
-    });
+        // [...slug] swallows every remaining segment, but needs at least one
+        if (/^\[\.\.\..*\]$/.test(part)) {
+            return routeParts.length > i;
+        }
+        if (i >= routeParts.length) {
+            return false;
+        }
+        // [id] matches exactly one segment
+        if (part.startsWith('[') && part.endsWith(']')) {
+            continue;
+        }
+        if (part !== routeParts[i]) {
+            return false;
+        }
+    }
+    return fileParts.length === routeParts.length;
 }
 
 async function openFile(filePath: string): Promise<void> {

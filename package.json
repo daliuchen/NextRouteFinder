@@ -24,7 +24,34 @@
         "command": "next-route-finder.findRoute",
         "title": "Find Next.js Route"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Next.js Route Finder",
+      "properties": {
+        "nextRouteFinder.include": {
+          "type": "array",
+          "default": [
+            "page",
+            "route"
+          ],
+          "items": {
+            "type": "string",
+            "enum": [
+              "page",
+              "layout",
+              "route"
+            ],
+            "enumDescriptions": [
+              "Pages (app/**/page.tsx, pages/**/*.tsx)",
+              "Layouts (app/**/layout.tsx) — shares its route with the sibling page, so it shows up as a second entry",
+              "Route handlers (app/**/route.ts, pages/api/**)"
+            ]
+          },
+          "uniqueItems": true,
+          "markdownDescription": "Which files to index as routes. Removing `layout` keeps one entry per route."
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "pnpm run compile",
