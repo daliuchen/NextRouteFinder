@@ -112,7 +112,7 @@
     "test": "pnpm run compile && pnpm run lint && node ./out/test/run.js"
   },
   "devDependencies": {
-    "@types/vscode": "^1.60.0",
+    "@types/vscode": "1.60.0",
     "@types/node": "^16.11.7",
     "@typescript-eslint/eslint-plugin": "^5.30.5",
     "@typescript-eslint/parser": "^5.30.5",
