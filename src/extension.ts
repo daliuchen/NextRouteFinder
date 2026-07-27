@@ -28,17 +28,19 @@ const NODE_MODULES_GLOB = '**/node_modules/**';
 
 // Cache all routes
 let index: RouteIndex = EMPTY_INDEX;
+// Workspace relative paths, resolved once per scan rather than per keystroke
+let displayPaths = new Map<string, string>();
 let hasScanned = false;
 let scanPromise: Promise<void> | undefined;
 
 let statusBarItem: vscode.StatusBarItem;
 
 export function activate(context: vscode.ExtensionContext) {
-    // Kick off the first scan in the background, the commands await it if needed
-    void refreshRoutes().then(updateStatusBar);
-
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     statusBarItem.command = 'next-route-finder.copyRoute';
+
+    // Kick off the first scan in the background, the commands await it if needed
+    void refreshRoutes().then(updateStatusBar);
 
     // Keep the cache in sync: creating/deleting/renaming a file invalidates it.
     // Scoped to the route directories so unrelated writes do not trigger a rescan.
@@ -140,7 +142,7 @@ function toQuickPickItems(entries: RouteEntry[]): RouteQuickPickItem[] {
     }
     return entries.map(entry => ({
         label: entry.route,
-        description: vscode.workspace.asRelativePath(entry.file),
+        description: displayPaths.get(entry.file) ?? entry.file,
         // QuickPick applies its own fuzzy filter on top of the items we set,
         // which would drop results our matcher deliberately kept (e.g. /users/123 -> /users/[id])
         alwaysShow: true,
@@ -284,6 +286,7 @@ async function scanWorkspace(): Promise<void> {
     const includedKinds = resolveIncludedKinds(vscode.workspace.getConfiguration('nextRouteFinder').get<string[]>('include'));
     try {
         index = await collectRoutes(await findProjectRoots(), includedKinds);
+        displayPaths = new Map(index.routes.map(entry => [entry.file, vscode.workspace.asRelativePath(entry.file)]));
     } catch (err) {
         // A single unreadable directory must never take the whole extension down
         console.error('[next-route-finder] route scan failed', err);

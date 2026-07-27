@@ -247,8 +247,9 @@ export function normalizeInput(input: string): string {
 
     // scheme://host[:port]
     value = value.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]*/i, '');
-    // host[:port] with no scheme, only when a path follows
-    value = value.replace(/^(?:localhost|(?:\d{1,3}\.){3}\d{1,3}|[a-z0-9-]+(?:\.[a-z0-9-]+)+)(?::\d+)?(?=\/)/i, '');
+    // host[:port] with no scheme, only when a path follows. The last label has
+    // to be letters only, otherwise a route like `v1.0/docs` looks like a host.
+    value = value.replace(/^(?:localhost|(?:\d{1,3}\.){3}\d{1,3}|(?:[a-z0-9-]+\.)+[a-z]{2,})(?::\d+)?(?=\/)/i, '');
     // query string and fragment
     value = value.split(/[?#]/)[0];
 

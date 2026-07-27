@@ -257,6 +257,12 @@ test('normalizeInput accepts a pasted URL', () => {
     // Plain routes must survive untouched
     assert.strictEqual(normalizeInput('/users/[id]'), '/users/[id]');
     assert.strictEqual(normalizeInput('blog'), '/blog');
+    // A first segment containing a dot is a route, not a host
+    assert.strictEqual(normalizeInput('v1.0/docs'), '/v1.0/docs');
+    assert.strictEqual(normalizeInput('api.v2/list'), '/api.v2/list');
+    assert.strictEqual(normalizeInput('2.0/x'), '/2.0/x');
+    // ...unless it really looks like one
+    assert.strictEqual(normalizeInput('my-app.local/blog'), '/blog');
     assert.strictEqual(normalizeInput('/docs/100%'), '/docs/100%', 'malformed escape is left alone');
 });
 
